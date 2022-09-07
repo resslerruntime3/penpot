@@ -16,6 +16,7 @@
    [app.common.pages.common :as cpc]
    [app.common.pages.helpers :as cph]
    [app.common.spec :as us]
+   [app.common.types.container :as ctn]
    [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.main.data.workspace.changes :as dch]
@@ -250,7 +251,7 @@
           shape
 
           (nil? root)
-          (cph/get-root-shape objects shape)
+          (ctn/get-root-shape objects shape)
 
           :else root)
 
@@ -260,7 +261,7 @@
           transformed-shape
 
           (nil? transformed-root)
-          (cph/get-root-shape objects transformed-shape)
+          (ctn/get-root-shape objects transformed-shape)
 
           :else transformed-root)
 
