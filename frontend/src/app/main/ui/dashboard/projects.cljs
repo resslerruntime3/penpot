@@ -7,9 +7,10 @@
 (ns app.main.ui.dashboard.projects
   (:require
    [app.common.math :as mth]
+   [app.common.data.macros :as dm]
    [app.main.data.dashboard :as dd]
    [app.main.data.events :as ev]
-   [app.main.data.messages :as dm]
+   [app.main.data.messages :as msg]
    [app.main.data.modal :as modal]
    [app.main.data.users :as du]
    [app.main.refs :as refs]
@@ -18,6 +19,7 @@
    [app.main.ui.dashboard.inline-edition :refer [inline-edition]]
    [app.main.ui.dashboard.project-menu :refer [project-menu]]
    [app.main.ui.icons :as i]
+   [app.main.ui.hooks :as h]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.router :as rt]
@@ -28,6 +30,20 @@
    [okulary.core :as l]
    [potok.core :as ptk]
    [rumext.v2 :as mf]))
+
+;; (def ^:private visibility-subject
+;;   (rx/behavior-subject nil))
+
+;; (defn- transform-intersection
+;;   [[entry observer]]
+;;   (let [target   (unchecked-get entry "target")
+;;         ratio    (unchecked-get entry "intersectionRatio")
+;;         visible? (or (unchecked-get entry "isIntersecting")
+;;                      (> ratio 0.5))
+;;         id       (dom/get-data target "id")]
+;;     ;; (js/console.log "transform-intersection" id visible?)
+;;     {:id id :visible? visible?}))
+
 
 (mf/defc header
   {::mf/wrap [mf/memo]}
@@ -80,7 +96,7 @@
         (fn []
           (swap! state #(assoc % :status :waiting))
           (st/emit!
-           (dm/error (tr "dashboard.libraries-and-templates.import-error"))))
+           (msg/error (tr "dashboard.libraries-and-templates.import-error"))))
 
         download-tutorial
         (fn []
@@ -94,7 +110,7 @@
      [:div.text
       [:div.title (tr "dasboard.tutorial-hero.title")]
       [:div.info (tr "dasboard.tutorial-hero.info")]
-      [:button.btn-primary.action {:on-click download-tutorial} 
+      [:button.btn-primary.action {:on-click download-tutorial}
        (case (:status @state)
          :waiting (tr "dasboard.tutorial-hero.start")
          :importing [:span.loader i/loader-pencil]
@@ -128,32 +144,40 @@
   [{:keys [project first? team files] :as props}]
   (let [locale     (mf/deref i18n/locale)
         file-count (or (:count project) 0)
+        project-id (:id project)
 
         dstate     (mf/deref refs/dashboard-local)
         edit-id    (:project-for-edit dstate)
 
-        local
-        (mf/use-state {:menu-open false
-                       :menu-pos nil
-                       :edition? (= (:id project) edit-id)})
+        local      (mf/use-state {:menu-open false
+                                  :menu-pos nil
+                                  :edition? (= (:id project) edit-id)})
+
+        width      (mf/use-state nil)
+        rowref     (mf/use-ref)
+        itemsize   (if (>= @width 1030)
+                    280
+                    230)
+
+        ratio      (if (some? @width) (/ @width itemsize) 0)
+        nitems     (mth/floor ratio)
+        limit      (min 10 nitems)
+        limit      (max 1 limit)
+
+        ;; stream     (mf/with-memo [project-id]
+        ;;             (->> visibility-subject
+        ;;                  (rx/filter #(= (dm/str project-id) (:id %)))
+        ;;                  (rx/map :visible?)
+        ;;                  (rx/filter identity)
+        ;;                  (rx/take 1)))
+        ;; visible?   (h/use-rxsub stream)
 
         on-nav
-        (mf/use-callback
+        (mf/use-fn
          (mf/deps project)
-         #(st/emit! (rt/nav :dashboard-files {:team-id (:team-id project)
-                                              :project-id (:id project)})))
-
-        width            (mf/use-state nil)
-        rowref           (mf/use-ref)
-        itemsize       (if (>= @width 1030)
-                         280
-                         230)
-
-        ratio          (if (some? @width) (/ @width itemsize) 0)
-        nitems         (mth/floor ratio)
-        limit          (min 10 nitems)
-        limit          (max 1 limit)
-
+         (fn []
+           (st/emit! (rt/nav :dashboard-files {:team-id (:team-id project)
+                                               :project-id project-id}))))
         toggle-pin
         (mf/use-callback
          (mf/deps project)
@@ -209,22 +233,25 @@
                      (dd/fetch-recent-files (:id team))
                      (dd/clear-selected-files))))]
 
-    (mf/use-effect
-     (fn []
-       (let [node (mf/ref-val rowref)
-             mnt? (volatile! true)
-             sub  (->> (wapi/observe-resize node)
-                       (rx/observe-on :af)
-                       (rx/subs (fn [entries]
-                                  (let [row (first entries)
-                                        row-rect (.-contentRect ^js row)
-                                        row-width (.-width ^js row-rect)]
-                                    (when @mnt?
-                                      (reset! width row-width))))))]
-         (fn []
-           (vreset! mnt? false)
-           (rx/dispose! sub)))))
-    [:div.dashboard-project-row {:class (when first? "first")}
+    (mf/with-effect
+      (let [node (mf/ref-val rowref)
+            mnt? (volatile! true)
+            sub  (->> (wapi/observe-resize node)
+                      (rx/observe-on :af)
+                      (rx/subs (fn [entries]
+                                 (let [row (first entries)
+                                       row-rect (.-contentRect ^js row)
+                                       row-width (.-width ^js row-rect)]
+                                   (when @mnt?
+                                     (reset! width row-width))))))]
+        (fn []
+          (vreset! mnt? false)
+          (rx/dispose! sub))))
+
+
+    [:div.dashboard-project-row
+     {:class (when first? "first")
+      :data-id (dm/str project-id)}
      [:div.project {:ref rowref}
       [:div.project-name-wrapper
        (if (:edition? @local)
@@ -265,6 +292,7 @@
         [:a.btn-secondary.btn-small.tooltip.tooltip-bottom
          {:on-click on-menu-click :alt (tr "dashboard.options") :data-test "project-options"}
          i/actions]]]
+
       (when (and (> limit 0)
                  (> file-count limit))
         [:div.show-more {:on-click on-nav}
@@ -290,53 +318,61 @@
                                  (reverse))
         recent-map          (mf/deref recent-files-ref)
         props               (some-> profile (get :props {}))
-        team-hero?          (:team-hero? props true)
+        team-hero?          (and (:team-hero? props true)
+                                 (not (:is-default team)))
         tutorial-viewed?    (:viewed-tutorial? props true)
         walkthrough-viewed? (:viewed-walkthrough? props true)
 
-        close-banner        (fn []
-                              (st/emit!
-                               (du/update-profile-props {:team-hero? false})
-                               (ptk/event ::ev/event {::ev/name "dont-show-team-up-hero"
-                                                      ::ev/origin "dashboard"})))
+        team-id             (:id team)
+        node-ref            (mf/use-var nil)
 
-        close-tutorial      (fn []
-                              (st/emit!
-                               (du/update-profile-props {:viewed-tutorial? true})
-                               (ptk/event ::ev/event {::ev/name "dont-show"
-                                                      ::ev/origin "get-started-hero-block"
-                                                      :type "tutorial"
-                                                      :section "dashboard"})))
+        close-banner
+        (mf/use-fn
+         (fn []
+           (st/emit! (du/update-profile-props {:team-hero? false})
+                     (ptk/event ::ev/event {::ev/name "dont-show-team-up-hero"
+                                            ::ev/origin "dashboard"}))))
+        close-tutorial
+        (mf/use-fn
+         (fn []
+           (st/emit! (du/update-profile-props {:viewed-tutorial? true})
+                     (ptk/event ::ev/event {::ev/name "dont-show"
+                                            ::ev/origin "get-started-hero-block"
+                                            :type "tutorial"
+                                            :section "dashboard"}))))
+        close-walkthrough
+        (mf/use-fn
+         (fn []
+           (st/emit! (du/update-profile-props {:viewed-walkthrough? true})
+                     (ptk/event ::ev/event {::ev/name "dont-show"
+                                            ::ev/origin "get-started-hero-block"
+                                            :type "walkthrough"
+                                            :section "dashboard"}))))]
 
-        close-walkthrough   (fn []
-                              (st/emit!
-                               (du/update-profile-props {:viewed-walkthrough? true})
-                               (ptk/event ::ev/event {::ev/name "dont-show"
-                                                      ::ev/origin "get-started-hero-block"
-                                                      :type "walkthrough"
-                                                      :section "dashboard"})))]
+    (mf/with-effect [team]
+      (let [tname (if (:is-default team)
+                    (tr "dashboard.your-penpot")
+                    (:name team))]
+        (dom/set-html-title (tr "title.dashboard.projects" tname))))
 
-    (mf/use-effect
-     (mf/deps team)
-     (fn []
-       (let [tname (if (:is-default team)
-                     (tr "dashboard.your-penpot")
-                     (:name team))]
-         (dom/set-html-title (tr "title.dashboard.projects" tname)))))
+    (mf/with-effect [team-id]
+      (st/emit! (dd/fetch-recent-files team-id)
+                (dd/clear-selected-files)))
 
-    (mf/use-effect
-     (mf/deps (:id team))
-     (fn []
-       (st/emit! (dd/fetch-recent-files (:id team))
-                 (dd/clear-selected-files))))
+    ;; (mf/with-effect [@node-ref]
+    ;;   (when-let [node @node-ref]
+    ;;     (let [stream (->> (wapi/intersection-observer node "div.dashboard-project-row")
+    ;;                       (rx/map transform-intersection))
+    ;;           sub    (rx/subscribe-with stream visibility-subject)]
+    ;;       (partial rx/dispose! sub))))
 
     (when (seq projects)
       [:*
        [:& header]
-       (when (and team-hero? (not (:is-default team)))
-         [:& team-hero
-          {:team team
-           :close-banner close-banner}])
+
+       (when team-hero?
+         [:& team-hero {:team team :close-banner close-banner}])
+
        (when (or (not tutorial-viewed?) (not walkthrough-viewed?))
          [:div.hero-projects
           (when (and (not tutorial-viewed?) (:is-default team))
@@ -348,7 +384,7 @@
             [:& interface-walkthrough
              {:close-walkthrough close-walkthrough}])])
 
-       [:section.dashboard-container.no-bg
+       [:section.dashboard-container.no-bg {:ref node-ref}
         (for [{:keys [id] :as project} projects]
           (let [files (when recent-map
                         (->> (vals recent-map)
@@ -358,5 +394,5 @@
                               :team team
                               :files files
                               :first? (= project (first projects))
-                              :key (:id project)}]))]])))
+                              :key id}]))]])))
 
