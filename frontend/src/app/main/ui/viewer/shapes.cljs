@@ -324,7 +324,7 @@
       [props]
       (let [shape     (obj/get props "shape")
             childs    (mapv #(get objects %) (:shapes shape))
-            shape     (gsh/transform-shape shape)
+            ;;shape     (gsh/transform-shape shape)
             props     (obj/merge! #js {} props
                                   #js {:shape shape
                                        :childs childs
@@ -405,7 +405,8 @@
 
             ]
         (when (and shape (not (:hidden shape)))
-          (let [shape (-> (gsh/transform-shape shape)
+          (let [shape (-> shape
+                          #_(gsh/transform-shape)
                           (gsh/translate-to-frame frame))
 
                 opts #js {:shape shape
