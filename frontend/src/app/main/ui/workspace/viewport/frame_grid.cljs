@@ -138,4 +138,4 @@
                   (or (empty? focus) (contains? focus (:id frame))))
          [:& grid-display-frame {:key (str "grid-" (:id frame))
                                  :zoom zoom
-                                 :frame (gsh/transform-shape frame)}]))]))
+                                 :frame frame}]))]))
